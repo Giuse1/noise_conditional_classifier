@@ -223,8 +223,8 @@ metrics_history = {'train_loss': [],
 
 @jax.jit
 def pred_step(state, batch):
-    data = batch['image']
-    # data = jax.tree_map(lambda x: scaler(x), data_)
+    data_ = batch['image']
+    data = jax.tree_map(lambda x: scaler(x), data_)
 
 
     ve_noise_scale = get_noise(data, rng)
