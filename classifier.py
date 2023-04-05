@@ -251,7 +251,6 @@ for step, batch in enumerate(train_ds.as_numpy_iterator()):
         # Compute metrics on the test set after each training epoch
         test_state = cnn_state
         for test_batch in test_ds.as_numpy_iterator():
-            test_batch = jax.tree_map(lambda x: scaler(x), test_batch)  # todo
             test_state = compute_metrics(state=test_state, batch=test_batch, rng=rng)
 
         for metric, value in test_state.metrics.compute().items():
