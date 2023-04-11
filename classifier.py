@@ -146,12 +146,11 @@ def compute_metrics(*, state, batch, rng):
     # logits = state.apply_fn({'params': state.params}, batch['image'])
     data_ = batch['image']
     data = jax.tree_map(lambda x: scaler(x), data_)
-    ve_noise_scale = get_noise(data, rng)
-    logits = state.apply_fn({'params': state.params}, data, ve_noise_scale)
-    loss = optax.softmax_cross_entropy_with_integer_labels(
-        logits=logits, labels=batch['label']).mean()
-    metric_updates = state.metrics.single_from_model_output(
-        logits=logits, labels=batch['label'], loss=loss)
+    perturbed_data, ve_noise_scale = get_noise(data, rng)
+
+    logits = state.apply_fn({'params': state.params}, perturbed_data, ve_noise_scale)
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits=logits, labels=batch['label']).mean()
+    metric_updates = state.metrics.single_from_model_output(logits=logits, labels=batch['label'], loss=loss)
     metrics = state.metrics.merge(metric_updates)
     state = state.replace(metrics=metrics)
     return state
@@ -187,14 +186,17 @@ num_train_steps = train_ds.cardinality().numpy()
 num_steps_per_epoch = num_train_steps // num_epochs
 print(f"num_train_steps {num_train_steps}")
 print(f"num_steps_per_epoch {num_steps_per_epoch}")
+
+
 def get_noise(data, rng):
     rng, step_rng = random.split(rng)
     t = random.uniform(step_rng, (data.shape[0],), minval=sampling_eps, maxval=sde.T)
-    ve_noise_scale = sde.marginal_prob(data, t)[1]
+    rng, step_rng = random.split(rng)
+    z = random.normal(step_rng, data.shape)
+    mean, ve_noise_scale = sde.marginal_prob(data, t)
+    perturbed_data = mean + batch_mul(ve_noise_scale, z)
 
-    return ve_noise_scale
-
-
+    return ve_noise_scale, perturbed_data
 @jax.jit
 def train_step(state, batch, rng):
     """Train for a single step."""
@@ -203,8 +205,8 @@ def train_step(state, batch, rng):
 
         data_ = batch['image']
         data = jax.tree_map(lambda x: scaler(x), data_)
-        ve_noise_scale = get_noise(data, rng)
-        logits = state.apply_fn({'params': params}, data, ve_noise_scale)
+        ve_noise_scale, perturbed_data = get_noise(data, rng)
+        logits = state.apply_fn({'params': params}, perturbed_data, ve_noise_scale)
         loss = optax.softmax_cross_entropy_with_integer_labels(
             logits=logits, labels=batch['label']).mean()
         return loss
@@ -213,7 +215,6 @@ def train_step(state, batch, rng):
     grads = grad_fn(state.params, rng)
     state = state.apply_gradients(grads=grads)
     return state
-
 
 metrics_history = {'train_loss': [],
                    'train_accuracy': [],
@@ -225,10 +226,8 @@ metrics_history = {'train_loss': [],
 def pred_step(state, batch):
     data_ = batch['image']
     data = jax.tree_map(lambda x: scaler(x), data_)
-
-
-    ve_noise_scale = get_noise(data, rng)
-    logits = state.apply_fn({'params': state.params}, data, ve_noise_scale)
+    ve_noise_scale, perturbed_data = get_noise(data, rng)
+    logits = state.apply_fn({'params': state.params}, perturbed_data, ve_noise_scale)
     return logits.argmax(axis=1)
 
 #train_iter = iter(train_ds)  # pytype: disable=wrong-arg-types
